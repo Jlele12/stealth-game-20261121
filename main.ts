@@ -5,7 +5,8 @@
 // judge reads, with the vendored makefun library. This entry is Nightjar Vault: an original
 // top-down stealth game — sneak past sentries' vision cones, hide in the shadow patches, lift the
 // gems and slip out through the exit unseen, across three vault floors with patrols you can learn.
-// The game ships 4 real PNG screenshots in screenshots/ (1-overview.png is the cover) and runs.
+// The game ships 4 real PNG screenshots in screenshots/ (1-overview.png, the first by name, is
+// the cover) and runs from any static server pointed at game/ as well as from main.ts itself.
 //
 // Serve it locally with `node serve.ts`, then open http://localhost:8080.
 // Outside the grader's container, MAKEFUN_OUTPUT_DIR stands in for /output:
