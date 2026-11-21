@@ -1,141 +1,193 @@
-// Drawing only: the world's state and the current screen in, pixels out. The 1280x720 playfield
-// is scaled to fit the window and centred, the margin filled with the backdrop colour. Flat
-// rectangles and circles, canvas text for the HUD and the panels. Text that holds a number is
-// rebuilt only when the number changes, so a frame allocates nothing.
-import { FIELD, FONT, LIVES, PALETTE } from './config.js';
-import { KIND_COIN } from './world.js';
+// Nightjar Vault — rendering. Draws the floor grid, shadow patches, walls and crates with
+// simple top faces, guard vision cones (fan of rays cast against opaque rects), the player,
+// gems, the exit, and the HUD.
+import { TILE, W, H, COLORS } from './config.js';
+import { segmentBlocked, opaqueRects } from './geometry.js';
+import { guardColor } from './guards.js';
 
-export const SCREEN_TITLE = 'title';
-export const SCREEN_PLAY = 'play';
-export const SCREEN_PAUSED = 'paused';
-export const SCREEN_OVER = 'over';
-
-/** The panel's width; its height grows with its lines: room for the title, the lines and the prompt. */
-const PANEL = { width: 600, top: 134, line: 34, bottom: 70 };
-const LIFE_SIZE = 20;
-const LIFE_GAP = 8;
-
-function cachedLabel(prefix) {
-  let value = -1;
-  let text = '';
-  return function label(next) {
-    if (next !== value) {
-      value = next;
-      text = prefix + next;
-    }
-    return text;
-  };
+function drawShadowPatches(ctx, level) {
+  for (const s of level.shadows) {
+    ctx.fillStyle = COLORS.shadow;
+    ctx.fillRect(s.x * TILE, s.y * TILE, s.w * TILE, s.h * TILE);
+  }
 }
 
-export function createRenderer(canvas) {
-  const context = canvas.getContext('2d');
-  const view = { scale: 1, x: 0, y: 0 };
-  const scoreLabel = cachedLabel('Score ');
-  const levelLabel = cachedLabel('Level ');
-  const finalLabel = cachedLabel('Score ');
-  const bestLabel = cachedLabel('Best ');
-
-  function resize() {
-    const ratio = window.devicePixelRatio || 1;
-    const width = Math.round(window.innerWidth * ratio);
-    const height = Math.round(window.innerHeight * ratio);
-    canvas.width = width;
-    canvas.height = height;
-    view.scale = Math.min(width / FIELD.width, height / FIELD.height);
-    view.x = (width - FIELD.width * view.scale) / 2;
-    view.y = (height - FIELD.height * view.scale) / 2;
+function drawFloor(ctx, level) {
+  for (let cy = 1; cy < level.rows; cy++) {
+    for (let cx = 1; cx < level.cols; cx++) {
+      ctx.fillStyle = (cx + cy) % 2 ? COLORS.floorLight : COLORS.floorShadow;
+      ctx.fillRect(cx * TILE, cy * TILE, TILE, TILE);
+    }
   }
+}
 
-  const fonts = new Map();
-  function text(value, x, y, size, color, align) {
-    if (!fonts.has(size)) fonts.set(size, `${size}px ${FONT}`);
-    context.font = fonts.get(size);
-    context.fillStyle = color;
-    context.textAlign = align;
-    context.fillText(value, x, y);
-  }
+function drawRect3d(ctx, r, side, top) {
+  const x = r.x * TILE, y = r.y * TILE, w = r.w * TILE, h = r.h * TILE;
+  ctx.fillStyle = side;
+  ctx.fillRect(x, y, w, h);
+  ctx.fillStyle = top;
+  ctx.fillRect(x + 3, y + 3, w - 6, h - 6);
+}
 
-  function drawField(state) {
-    context.fillStyle = PALETTE.sky;
-    context.fillRect(0, 0, FIELD.width, FIELD.height);
-    context.fillStyle = PALETTE.ground;
-    context.fillRect(0, FIELD.groundY, FIELD.width, FIELD.height - FIELD.groundY);
-
-    const items = state.items;
-    for (let index = 0; index < items.length; index += 1) {
-      const item = items[index];
-      if (!item.active) continue;
-      if (item.kind === KIND_COIN) {
-        context.fillStyle = PALETTE.coin;
-        context.beginPath();
-        context.arc(item.x + item.width / 2, item.y + item.height / 2, item.width / 2, 0, Math.PI * 2);
-        context.fill();
-      } else {
-        context.fillStyle = PALETTE.block;
-        context.fillRect(item.x, item.y, item.width, item.height);
+function drawCones(ctx, guards, level, rects) {
+  for (const g of guards) {
+    const color = g.state === 'chase' ? COLORS.coneChase : g.state === 'suspicious' || g.suspicion > 0.2 ? COLORS.coneSuspicious : COLORS.cone;
+    const half = (60 * Math.PI) / 360; // GUARD fov / 2, kept local to avoid a cycle
+    const range = 260;
+    const steps = 26;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(g.x, g.y);
+    for (let i = 0; i <= steps; i++) {
+      const a = g.facing - half + (2 * half * i) / steps;
+      let d = range;
+      // March out to the first blocker so the cone hugs the cover.
+      for (let t = 14; t <= range; t += 7) {
+        const px = g.x + Math.cos(a) * t, py = g.y + Math.sin(a) * t;
+        if (segmentBlocked(g.x, g.y, px, py, rects)) { d = t - 7; break; }
       }
+      ctx.lineTo(g.x + Math.cos(a) * d, g.y + Math.sin(a) * d);
     }
-
-    const player = state.player;
-    // Blink while invulnerable after a hit: hidden on every other tenth of a second.
-    if (player.invulnerable === 0 || Math.floor(player.invulnerable * 10) % 2 === 1) {
-      context.fillStyle = PALETTE.player;
-      context.fillRect(player.x, player.y, player.width, player.height);
-    }
+    ctx.closePath();
+    ctx.fill();
   }
+}
 
-  function drawHud(state) {
-    context.textBaseline = 'top';
-    text(scoreLabel(state.score), 24, 20, 28, PALETTE.text, 'left');
-    text(levelLabel(state.level), FIELD.width / 2, 20, 28, PALETTE.text, 'center');
-    const firstLife = FIELD.width - 24 - LIVES * (LIFE_SIZE + LIFE_GAP) + LIFE_GAP;
-    text('Lives', firstLife - 12, 20, 28, PALETTE.text, 'right');
-    for (let life = 0; life < LIVES; life += 1) {
-      context.fillStyle = life < state.lives ? PALETTE.player : PALETTE.ground;
-      context.fillRect(firstLife + life * (LIFE_SIZE + LIFE_GAP), 24, LIFE_SIZE, LIFE_SIZE);
-    }
+function drawGuard(ctx, g) {
+  ctx.save();
+  ctx.translate(g.x, g.y);
+  ctx.rotate(g.facing);
+  ctx.fillStyle = guardColor(g);
+  ctx.beginPath();
+  ctx.arc(0, 0, g.r, 0, Math.PI * 2);
+  ctx.fill();
+  // visor showing facing
+  ctx.fillStyle = '#1c202b';
+  ctx.fillRect(2, -3, 9, 6);
+  ctx.restore();
+  // suspicion pips
+  if (g.suspicion > 0.05) {
+    ctx.fillStyle = guardColor(g);
+    ctx.fillRect(g.x - 12, g.y - g.r - 9, 24 * g.suspicion, 4);
+    ctx.strokeStyle = '#0b0d14';
+    ctx.strokeRect(g.x - 12, g.y - g.r - 9, 24, 4);
   }
+}
 
-  function drawPanel(title, lines, prompt) {
-    const height = PANEL.top + lines.length * PANEL.line + PANEL.bottom;
-    const x = (FIELD.width - PANEL.width) / 2;
-    const y = (FIELD.height - height) / 2;
-    context.fillStyle = PALETTE.panel;
-    context.fillRect(x, y, PANEL.width, height);
-    context.textBaseline = 'alphabetic';
-    text(title, FIELD.width / 2, y + 78, 48, PALETTE.text, 'center');
-    for (let index = 0; index < lines.length; index += 1) {
-      text(lines[index], FIELD.width / 2, y + PANEL.top + index * PANEL.line, 22, PALETTE.muted, 'center');
-    }
-    text(prompt, FIELD.width / 2, y + height - 40, 24, PALETTE.coin, 'center');
+function drawPlayer(ctx, p) {
+  ctx.save();
+  ctx.translate(p.x, p.y);
+  ctx.fillStyle = p.sneaking ? COLORS.playerSneak : COLORS.player;
+  ctx.beginPath();
+  ctx.arc(0, 0, p.r, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#0b0d14';
+  ctx.beginPath();
+  ctx.arc(Math.cos(p.facing) * 4, Math.sin(p.facing) * 4, 3.2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+  // sneaking halo — a soft ring that reads "quiet"
+  if (p.sneaking) {
+    ctx.strokeStyle = 'rgba(95,217,168,0.5)';
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.r + 5 + Math.sin(p.stepPhase) * 1.5, 0, Math.PI * 2);
+    ctx.stroke();
   }
+}
 
-  const TITLE_LINES = ['Dodge the red blocks. Catch the gold coins.', 'Move with ← → or A D.  Pause with P.', ''];
-  const PAUSED_LINES = ['The blocks will wait for you.'];
-  const OVER_LINES = ['', ''];
-
-  /** Paint one frame: the field, then the HUD or a panel for the screen the game is on. */
-  function draw(state, screen, best) {
-    context.setTransform(1, 0, 0, 1, 0, 0);
-    context.fillStyle = PALETTE.backdrop;
-    context.fillRect(0, 0, canvas.width, canvas.height);
-    context.setTransform(view.scale, 0, 0, view.scale, view.x, view.y);
-    drawField(state);
-    if (screen === SCREEN_TITLE) {
-      TITLE_LINES[2] = bestLabel(best);
-      drawPanel('Block Dodger', TITLE_LINES, 'Press Space or click to start');
-      return;
-    }
-    drawHud(state);
-    if (screen === SCREEN_PAUSED) drawPanel('Paused', PAUSED_LINES, 'Press P to resume');
-    else if (screen === SCREEN_OVER) {
-      OVER_LINES[0] = finalLabel(state.score);
-      OVER_LINES[1] = bestLabel(best);
-      drawPanel('Game over', OVER_LINES, 'Press Space or click to play again');
-    }
+function drawGems(ctx, gems) {
+  for (const gem of gems) {
+    if (gem.taken) continue;
+    const x = gem.x * TILE, y = gem.y * TILE;
+    const wobble = Math.sin(gem.phase) * 3;
+    ctx.fillStyle = COLORS.gem;
+    ctx.beginPath();
+    ctx.moveTo(x, y - 9 + wobble);
+    ctx.lineTo(x + 7, y + wobble);
+    ctx.lineTo(x, y + 9 + wobble);
+    ctx.lineTo(x - 7, y + wobble);
+    ctx.closePath();
+    ctx.fill();
   }
+}
 
-  resize();
-  window.addEventListener('resize', resize);
-  return { draw };
+function drawExit(ctx, level) {
+  const e = level.exit;
+  const x = e.x * TILE, y = e.y * TILE, w = e.w * TILE, h = e.h * TILE;
+  ctx.fillStyle = COLORS.exit;
+  ctx.fillRect(x + 4, y + 4, w - 8, h - 8);
+  ctx.strokeStyle = '#c9baff';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(x + 8, y + 8, w - 16, h - 16);
+  ctx.fillStyle = '#0b0d14';
+  ctx.font = 'bold 13px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillText('EXIT', x + w / 2, y + h / 2 + 4);
+  ctx.lineWidth = 1;
+}
+
+function drawHud(ctx, state) {
+  ctx.textAlign = 'left';
+  ctx.fillStyle = '#e8e4d8';
+  ctx.font = 'bold 16px sans-serif';
+  ctx.fillText(state.level.name, 14, 26);
+  ctx.font = '14px sans-serif';
+  ctx.fillText(`Score ${state.score}`, 14, 48);
+  ctx.fillText(`Gems ${state.gemsTaken}/${state.gemsTotal}`, 150, 48);
+  // global alert meter
+  const mx = W - 260, mw = 240;
+  ctx.fillStyle = '#1a1d28';
+  ctx.fillRect(mx, 34, mw, 12);
+  const alert = Math.min(1, state.alert);
+  ctx.fillStyle = alert > 0.6 ? COLORS.guardChase : alert > 0.2 ? COLORS.guardAlert : COLORS.player;
+  ctx.fillRect(mx, 34, mw * alert, 12);
+  ctx.strokeStyle = '#4a5166';
+  ctx.strokeRect(mx, 34, mw, 12);
+  ctx.fillStyle = '#e8e4d8';
+  ctx.fillText('ALERT', mx - 52, 46);
+  if (state.hidden) {
+    ctx.fillStyle = COLORS.player;
+    ctx.fillText('HIDDEN', 14, 70);
+  }
+}
+
+function drawCenterText(ctx, lines, sub) {
+  ctx.fillStyle = 'rgba(11,13,20,0.75)';
+  ctx.fillRect(0, 0, W, H);
+  ctx.textAlign = 'center';
+  ctx.fillStyle = '#e8e4d8';
+  ctx.font = 'bold 44px sans-serif';
+  ctx.fillText(lines[0], W / 2, H / 2 - 30);
+  ctx.font = '18px sans-serif';
+  let y = H / 2 + 10;
+  for (const line of lines.slice(1)) { ctx.fillText(line, W / 2, y); y += 26; }
+  if (sub) { ctx.font = '15px sans-serif'; ctx.fillStyle = '#9aa3b8'; ctx.fillText(sub, W / 2, y + 16); }
+}
+
+export function render(ctx, state, frames) {
+  const level = state.level;
+  const rects = opaqueRects(level);
+  ctx.clearRect(0, 0, W, H);
+  drawFloor(ctx, level);
+  drawShadowPatches(ctx, level);
+  drawExit(ctx, level);
+  drawGems(ctx, state.gems);
+  drawCones(ctx, state.guards, level, rects);
+  for (const w of level.walls) drawRect3d(ctx, w, COLORS.wall, COLORS.wallTop);
+  for (const c of level.cover) drawRect3d(ctx, c, c.kind === 'pillar' ? COLORS.pillar : COLORS.crate, c.kind === 'pillar' ? '#454d6e' : COLORS.crateTop);
+  for (const g of state.guards) drawGuard(ctx, g);
+  if (state.phase === 'playing' || state.phase === 'levelClear') drawPlayer(ctx, state.player);
+  drawHud(ctx, state);
+
+  if (state.phase === 'title') {
+    drawCenterText(ctx, ['NIGHTJAR VAULT', 'Sneak past the sentries. Lift the gems. Slip out unseen.',
+      'WASD / arrows move — SHIFT sneaks — mouse aims', 'Shadows hide you. Crates block their sight.'],
+      state.level?.hint ?? '');
+  } else if (state.phase === 'caught') {
+    drawCenterText(ctx, ['CAUGHT!', `A sentry grabbed you on ${state.level.name}.`, `Score: ${state.score}`, 'Press R to try the floor again, ENTER for the title.']);
+  } else if (state.phase === 'won') {
+    drawCenterText(ctx, ['CLEAN GETAWAY!', 'You emptied the vault and were never caught.', `Final score: ${state.score}`, 'Press ENTER to play again.']);
+  } else if (state.phase === 'levelClear') {
+    drawCenterText(ctx, ['FLOOR CLEARED', state.level.name, `Score: ${state.score}`, 'Press ENTER for the next floor.']);
+  }
 }

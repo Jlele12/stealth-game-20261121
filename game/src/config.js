@@ -1,61 +1,62 @@
-// Every tuning number and colour in one place. The playfield is a fixed 1280x720 logical area;
-// the renderer scales it to the window, so no rule below depends on the screen size.
-
-export const FIELD = { width: 1280, height: 720, groundY: 664 };
-
-/** The simulation's fixed step, in seconds: 60 updates a second whatever the display's rate. */
-export const STEP = 1 / 60;
+// Nightjar Vault — tuning constants, shared by every module.
+export const TILE = 40;              // pixels per tile
+export const VIEW_COLS = 32;         // playfield width in tiles
+export const VIEW_ROWS = 20;         // playfield height in tiles
+export const W = VIEW_COLS * TILE;   // 1280
+export const H = VIEW_ROWS * TILE;   // 800
 
 export const PLAYER = {
-  width: 72,
-  height: 24,
-  speed: 560,
-  invulnerable: 1.5,
+  speed: 2.6,          // px per frame walking
+  sneak: 1.3,          // px per frame sneaking (hold shift)
+  radius: 9,
+  startAlertImmunity: 90,
 };
 
-export const LIVES = 3;
-
-export const BLOCK = {
-  minWidth: 40,
-  maxWidth: 110,
-  height: 36,
-  speed: 240,
-  speedPerLevel: 30,
-  speedJitter: 90,
-  interval: 0.55,
-  intervalScale: 0.88,
-  minInterval: 0.14,
-  dodgePoints: 1,
+export const GUARD = {
+  speed: 1.7,
+  chaseSpeed: 3.0,
+  radius: 10,
+  fovDeg: 60,           // full angle of the vision cone
+  nearRange: 190,       // cone reach standing in light
+  crouchPenalty: 0.55,  // cone reach shrinks when guard stands in shadow... player side instead
+  viewRange: 260,
+  suspicionRate: 0.016, // suspicion gain per frame when player in cone
+  decayRate: 0.004,     // suspicion decay per frame when clear
+  chaseFrames: 300,     // how long a guard chases after losing sight
+  pauseFrames: 90,      // pause at each waypoint
 };
 
-export const COIN = {
-  size: 24,
-  speed: 190,
-  speedPerLevel: 14,
-  interval: 1.4,
-  intervalJitter: 0.8,
-  points: 10,
+export const DETECTION = {
+  max: 1,               // global alert meter
+  alarmDecay: 0.0018,
 };
 
-/** Seconds of play per level, and the last level: speeds and spawn rates stop growing there. */
-export const LEVEL = { seconds: 12, max: 12 };
-
-/** How many falling things can exist at once; the pool is allocated once, at boot. */
-export const POOL_SIZE = 64;
-
-export const PALETTE = {
-  backdrop: '#11141b',
-  sky: '#1b1f2a',
-  ground: '#2a3040',
-  player: '#4fc3f7',
-  block: '#e5534b',
-  coin: '#f2c94c',
-  panel: '#252b38',
-  text: '#eef1f5',
-  muted: '#8b93a3',
+export const STATE = {
+  title: 'title',
+  playing: 'playing',
+  caught: 'caught',
+  won: 'won',
+  levelClear: 'levelClear',
 };
 
-export const FONT = 'system-ui, -apple-system, "Segoe UI", sans-serif';
-
-/** Where the best score is kept between visits (this browser only). */
-export const BEST_KEY = 'block-dodger.best';
+export const COLORS = {
+  floorLight: '#232633',
+  floorShadow: '#1a1d28',
+  wall: '#4a5166',
+  wallTop: '#5c6479',
+  crate: '#7a5a34',
+  crateTop: '#946f42',
+  pillar: '#39405a',
+  player: '#5fd9a8',
+  playerSneak: '#3aa87c',
+  guard: '#d95f5f',
+  guardAlert: '#e8b23a',
+  guardChase: '#e04b3a',
+  cone: 'rgba(230,220,140,0.14)',
+  coneSuspicious: 'rgba(232,178,58,0.20)',
+  coneChase: 'rgba(224,75,58,0.24)',
+  gem: '#63c7f2',
+  exit: '#8f6ff2',
+  shadow: 'rgba(5,7,12,0.35)',
+  visionSafe: 'rgba(95,217,168,0.10)',
+};
